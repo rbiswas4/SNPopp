@@ -2,7 +2,7 @@
 Module related to details of SALT distributions
 """
 from __future__ import absolute_import, print_function
-__all__ = ['double_gauss', 'SimpleSALTDist']
+__all__ = ['SALT2_MMDist']
 import numpy as np
 
 def double_gauss(mu, sigp, sigm, size):
