@@ -162,26 +162,26 @@ class GMM_SALTPopulation(SimpleSALTPopulation):
             timescale = self.mjdmax - self.mjdmin
             T0Vals = self.rng_model.uniform(size=self.numSources) * timescale \
                     + self.mjdmin
-            mB, x1, c, m = SALT2_MMDist(self.numSources)
-            mB += self.h70cosmo.distmod(self.zSamples).value
+            mBB, x1, c, m = SALT2_MMDist(self.numSources)
+            mBB += self.h70cosmo.distmod(self.zSamples).value
             # cvals = self.rng_model.normal(loc=0., scale=self.cSigma,
             #                              size=self.numSources)
             # x1vals = self.rng_model.normal(loc=0., scale=self.x1Sigma,
             #                              size=self.numSources)
             # M = - self.alpha * x1vals - self.beta * cvals
             # MnoDisp = self.centralMabs + M
-            MnoDisp = mB - self.cosmo.distmod(self.zSamples).value
+            MnoDisp = mBB - self.cosmo.distmod(self.zSamples).value
             Mabs = MnoDisp + self.rng_model.normal(loc=0., scale=self.Mdisp,
                                                    size=self.numSources)
             x0 = np.zeros(self.numSources)
-            mBB = np.zeros(self.numSources)
+            mB = np.zeros(self.numSources)
             model = sncosmo.Model(source='SALT2')
             for i, z in enumerate(self.zSamples):
                 model.set(z=self.zSamples[i], x1=x1[i], c=c[i])
                 model.set_source_peakabsmag(Mabs[i], 'bessellB', 'ab',
                                             cosmo=self.cosmo)
                 x0[i] = model.get('x0')
-                mBB[i] = model.source.peakmag('bessellB', 'ab')
+                mB[i] = model.source.peakmag('bessellB', 'ab')
 
             df = pd.DataFrame(dict(x0=x0, mB=mB, x1=x1, c=c, mBB=mBB,
                                    MnoDisp=MnoDisp, Mabs=Mabs, t0=T0Vals,
@@ -189,98 +189,8 @@ class GMM_SALTPopulation(SimpleSALTPopulation):
             df['model'] = 'SALT2'
             self._paramsTable = df.set_index('idx')
         return self._paramsTable
-    @property
-    def paramSamples(self):
-        """ rewrite the paramSamples property with Gaussian Mixture Models. This
-        is a dataframe with the required information.
-        """
-
-        if self._paramSamples is not None:
-            return self._paramSamples
-        timescale = self.mjdmax - self.mjdmin
-        T0Vals = self.randomState.uniform(size=self.numSN) * timescale \
-            + self.mjdmin
-        mB, x1, c, m = SALT2_MMDist(self.numSN)
-        x0 = np.zeros(len(mB))
-        mB += self.randomState.normal(loc=0., scale=self.Mdisp,
-                                      size=self.numSN)
-        model = sncosmo.Model(source='SALT2')
-        for i, z in enumerate(self.zSamples):
-            model.set(z=z, x1=x1[i], c=c[i])
-            model.set_source_peakabsmag(mB[i], 'bessellB', 'ab',
-                                        cosmo=self.cosmo)
-            x0[i] = model.get('x0')
-            # mB[i] = model.source.peakmag('bessellB', 'ab')
-            model.source.set_peakmag(mB[i], 'bessellB', 'ab')
-            x0[i] = model.get('x0')
-        df = pd.DataFrame(dict(x0=x0, mB=mB, x1=x1, c=c,
-                               t0=T0Vals, z=self.zSamples, snid=self.snids))
-        self._paramSamples = df
-        return self._paramSamples
 
 
-###class GMM_SALT2Params(SimpleSALTDist):
-###    """
-###    Class to provide SALT2 parameters for a cosmological distribution of SN
-###    based on the function provided by David Rubin.
-###
-###    Parameters
-###    ----------
-###    numSN : int, or None
-###        Number of SN in sample.  If `None`, calculated from zSamples
-###    zSamples : sequence of floats
-###        samples of redshift
-###    snids : sequence of ints, defaults to None
-###        if None, an integer sequence from 0 is used.
-###    alpha : float, defaults to 0.11
-###        Tripp parameter alpha
-###    beta : float, defaults to 3.14
-###        Tripp parameter beta
-###    Mdisp : float, defaults to 0.15
-###        intrinsic dispersion assumed to be only in luminosity
-###    rng : instance of `np.random.RandomState`
-###    cosmo : instance of `astropy.Cosmology`, defaults to PLANCK15
-###        specifies the cosmological parameters
-###    mjdmin : float, defaults to 59580. 
-###        start of the survey
-###    surveyDuration: Float, defaults to 10.
-###        duration of the survey in years
-###    """
-###    def __init__(self, numSN, zSamples, snids=None, alpha=0.11, beta=3.14,
-###                 Mdisp=0.15, rng=None, cosmo=Planck15, mjdmin=59580, surveyDuration=10.):
-###        super(self.__class__, self).__init__(numSN, zSamples, snids=snids, alpha=alpha,
-###                              beta=beta, rng=rng, cosmo=cosmo, mjdmin=mjdmin,
-###                              surveyDuration=surveyDuration, Mdisp=Mdisp)
-###
-###    @property
-###    def paramSamples(self):
-###        """ rewrite the paramSamples property with Gaussian Mixture Models. This
-###        is a dataframe with the required information.
-###        """
-###
-###        if self._paramSamples is not None:
-###            return self._paramSamples
-###        timescale = self.mjdmax - self.mjdmin
-###        T0Vals = self.randomState.uniform(size=self.numSN) * timescale \
-###            + self.mjdmin
-###        mB, x1, c, m = SALT2_MMDist(self.numSN)
-###        x0 = np.zeros(len(mB))
-###        mB += self.randomState.normal(loc=0., scale=self.Mdisp,
-###                                      size=self.numSN)
-###        model = sncosmo.Model(source='SALT2')
-###        for i, z in enumerate(self.zSamples):
-###            model.set(z=z, x1=x1[i], c=c[i])
-###            model.set_source_peakabsmag(mB[i], 'bessellB', 'ab',
-###                                        cosmo=self.cosmo)
-###            x0[i] = model.get('x0')
-###            # mB[i] = model.source.peakmag('bessellB', 'ab')
-###            model.source.set_peakmag(mB[i], 'bessellB', 'ab')
-###            x0[i] = model.get('x0')
-###        df = pd.DataFrame(dict(x0=x0, mB=mB, x1=x1, c=c,
-###                               t0=T0Vals, z=self.zSamples, snid=self.snids))
-###        self._paramSamples = df
-###        return self._paramSamples
-###
 ###class CoordSamples(PositionSamples, HealpixTiles):
 ###    def __init__(self, nside, hpOpSim, rng):
 ###        self.nside = nside
