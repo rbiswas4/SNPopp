@@ -2,13 +2,14 @@
 Concrete implementations of `varpop.BaseSpatialPopulation` for SALT2 SN.
 """
 from __future__ import absolute_import, print_function
-__all__ = ['SimpleSALTPopulation']
+__all__ = ['SimpleSALTPopulation', 'GMM_SALTPopulation']
 import numpy as np
 import pandas as pd
 from astropy.cosmology import Planck15
 import sncosmo
 from varpop import (BasePopulation,
                     PowerLawRates)
+from . import SALT2_MMDist
 
 
 class SimpleSALTPopulation(BasePopulation):
@@ -139,14 +140,55 @@ class SimpleSALTPopulation(BasePopulation):
             raise ValueError('rng must be provided')
         return self._rng
 
-class GMM_SALT2Population(SimpleSALTPopulation):
+class GMM_SALTPopulation(SimpleSALTPopulation):
+    
+    def __init__(self, zSamples, rng, snids=None, alphaTripp=0.11, betaTripp=3.14,
+                 cSigma=0.1, x1Sigma=1.0, meanMB=-19.3, Mdisp=0.15,
+                 cosmo=Planck15, mjdmin=59580., surveyDuration=10.):
+        super().__init__(zSamples, rng, snids=None, alphaTripp=0.11, betaTripp=3.14,
+                         cSigma=0.1, x1Sigma=1.0, meanMB=-19.3, Mdisp=0.15,
+                         cosmo=Planck15, mjdmin=59580., surveyDuration=10.)
 
-    def __init__(self, numSN, zSamples, snids=None, alpha=0.11, beta=3.14,
-                 Mdisp=0.15, rng=None, cosmo=Planck15, mjdmin=59580, surveyDuration=10.):
-        super(self.__class__, self).__init__(numSN, zSamples, snids=snids, alpha=alpha,
-                              beta=beta, rng=rng, cosmo=cosmo, mjdmin=mjdmin,
-                              surveyDuration=surveyDuration, Mdisp=Mdisp)
 
+    @property
+    def h70cosmo(self):
+        H70cosmo = self.cosmo.clone(name='H70cosmo',
+                                    H0=self.cosmo.H0 * (70/self.cosmo.H0.value))
+        return H70cosmo
+
+    @property
+    def paramsTable(self):
+        if self._paramsTable is None:
+            timescale = self.mjdmax - self.mjdmin
+            T0Vals = self.rng_model.uniform(size=self.numSources) * timescale \
+                    + self.mjdmin
+            mB, x1, c, m = SALT2_MMDist(self.numSources)
+            mB += self.h70cosmo.distmod(self.zSamples).value
+            # cvals = self.rng_model.normal(loc=0., scale=self.cSigma,
+            #                              size=self.numSources)
+            # x1vals = self.rng_model.normal(loc=0., scale=self.x1Sigma,
+            #                              size=self.numSources)
+            # M = - self.alpha * x1vals - self.beta * cvals
+            # MnoDisp = self.centralMabs + M
+            MnoDisp = mB - self.cosmo.distmod(self.zSamples).value
+            Mabs = MnoDisp + self.rng_model.normal(loc=0., scale=self.Mdisp,
+                                                   size=self.numSources)
+            x0 = np.zeros(self.numSources)
+            mBB = np.zeros(self.numSources)
+            model = sncosmo.Model(source='SALT2')
+            for i, z in enumerate(self.zSamples):
+                model.set(z=self.zSamples[i], x1=x1[i], c=c[i])
+                model.set_source_peakabsmag(Mabs[i], 'bessellB', 'ab',
+                                            cosmo=self.cosmo)
+                x0[i] = model.get('x0')
+                mBB[i] = model.source.peakmag('bessellB', 'ab')
+
+            df = pd.DataFrame(dict(x0=x0, mB=mB, x1=x1, c=c, mBB=mBB,
+                                   MnoDisp=MnoDisp, Mabs=Mabs, t0=T0Vals,
+                                   z=self.zSamples, idx=self.idxvalues))
+            df['model'] = 'SALT2'
+            self._paramsTable = df.set_index('idx')
+        return self._paramsTable
     @property
     def paramSamples(self):
         """ rewrite the paramSamples property with Gaussian Mixture Models. This
