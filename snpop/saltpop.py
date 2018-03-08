@@ -7,7 +7,8 @@ import numpy as np
 import pandas as pd
 from astropy.cosmology import Planck15
 import sncosmo
-from varpop import BasePopulation
+from varpop import (BasePopulation,
+                    PowerLawRates)
 
 
 class SimpleSALTPopulation(BasePopulation):
@@ -60,6 +61,29 @@ class SimpleSALTPopulation(BasePopulation):
         self.surveyDuration = surveyDuration
         self._paramsTable = None
 
+
+    @classmethod
+    def fromSkyArea(cls, rng, snids=None, alpha=2.6e-5, beta=1.5, 
+                    alphaTripp=0.11, betaTripp=3.14,
+                    cSigma=0.1, x1Sigma=1.0, meanMB=-19.3, Mdisp=0.15,
+                    cosmo=Planck15, mjdmin=59580., surveyDuration=10.,
+                    fieldArea=10., skyFraction=None, zmax=1.4, zmin=1.0e-8,
+                    numzBins=20):
+        """
+        Class method to use either FieldArea or skyFraction and zbins 
+        (zmin, zmax, numzins) to obtain the correct number of zSamples.
+        """
+        pl = PowerLawRates(rng=rng, cosmo=cosmo, alpha=alpha, beta=beta,
+                           zlower=zmin, zhigher=zmax, numBins=numzBins,
+                           surveyDuration=surveyDuration, fieldArea=fieldArea,
+                           skyFraction=skyFraction)
+
+        cl = cls(pl.zSamples, rng=rng, snids=snids, alphaTripp=alphaTripp,
+                 betaTripp=betaTripp, cSigma=cSigma, x1Sigma=x1Sigma,
+                 meanMB=meanMB, Mdisp=Mdisp, cosmo=cosmo, mjdmin=mjdmin,
+                 surveyDuration=surveyDuration)
+        return cl
+
     @property
     def mjdmin(self):
         return self._mjdmin
@@ -70,7 +94,6 @@ class SimpleSALTPopulation(BasePopulation):
 
     @property
     def paramsTable(self):
-
         if self._paramsTable is None:
             timescale = self.mjdmax - self.mjdmin
             T0Vals = self.rng_model.uniform(size=self.numSources) * timescale \
@@ -80,7 +103,8 @@ class SimpleSALTPopulation(BasePopulation):
             x1vals = self.rng_model.normal(loc=0., scale=self.x1Sigma,
                                            size=self.numSources)
             M = - self.alpha * x1vals - self.beta * cvals
-            Mabs = self.centralMabs + M + self.rng_model.normal(loc=0., scale=self.Mdisp,
+            MnoDisp = self.centralMabs + M
+            Mabs = MnoDisp + self.rng_model.normal(loc=0., scale=self.Mdisp,
                                                size=self.numSources)
             x0 = np.zeros(self.numSources)
             mB = np.zeros(self.numSources)
@@ -91,9 +115,10 @@ class SimpleSALTPopulation(BasePopulation):
                                             cosmo=self.cosmo)
                 x0[i] = model.get('x0')
                 mB[i] = model.source.peakmag('bessellB', 'ab')
-            df = pd.DataFrame(dict(x0=x0, mB=mB, x1=x1vals, c=cvals, M=M,
-                                   Mabs=Mabs, t0=T0Vals, z=self.zSamples,
-                                   idx=self.idxvalues))
+
+            df = pd.DataFrame(dict(x0=x0, mB=mB, x1=x1vals, c=cvals,
+                                   MnoDisp=MnoDisp, Mabs=Mabs, t0=T0Vals,
+                                   z=self.zSamples, idx=self.idxvalues))
             df['model'] = 'SALT2'
             self._paramsTable = df.set_index('idx')
         return self._paramsTable
@@ -103,7 +128,6 @@ class SimpleSALTPopulation(BasePopulation):
         if self._snids is None:
             self._snids = np.arange(self.numSources)
         return self._snids
-
 
     @property
     def numSources(self):
@@ -115,6 +139,42 @@ class SimpleSALTPopulation(BasePopulation):
             raise ValueError('rng must be provided')
         return self._rng
 
+class GMM_SALT2Population(SimpleSALTPopulation):
+
+    def __init__(self, numSN, zSamples, snids=None, alpha=0.11, beta=3.14,
+                 Mdisp=0.15, rng=None, cosmo=Planck15, mjdmin=59580, surveyDuration=10.):
+        super(self.__class__, self).__init__(numSN, zSamples, snids=snids, alpha=alpha,
+                              beta=beta, rng=rng, cosmo=cosmo, mjdmin=mjdmin,
+                              surveyDuration=surveyDuration, Mdisp=Mdisp)
+
+    @property
+    def paramSamples(self):
+        """ rewrite the paramSamples property with Gaussian Mixture Models. This
+        is a dataframe with the required information.
+        """
+
+        if self._paramSamples is not None:
+            return self._paramSamples
+        timescale = self.mjdmax - self.mjdmin
+        T0Vals = self.randomState.uniform(size=self.numSN) * timescale \
+            + self.mjdmin
+        mB, x1, c, m = SALT2_MMDist(self.numSN)
+        x0 = np.zeros(len(mB))
+        mB += self.randomState.normal(loc=0., scale=self.Mdisp,
+                                      size=self.numSN)
+        model = sncosmo.Model(source='SALT2')
+        for i, z in enumerate(self.zSamples):
+            model.set(z=z, x1=x1[i], c=c[i])
+            model.set_source_peakabsmag(mB[i], 'bessellB', 'ab',
+                                        cosmo=self.cosmo)
+            x0[i] = model.get('x0')
+            # mB[i] = model.source.peakmag('bessellB', 'ab')
+            model.source.set_peakmag(mB[i], 'bessellB', 'ab')
+            x0[i] = model.get('x0')
+        df = pd.DataFrame(dict(x0=x0, mB=mB, x1=x1, c=c,
+                               t0=T0Vals, z=self.zSamples, snid=self.snids))
+        self._paramSamples = df
+        return self._paramSamples
 
 
 ###class GMM_SALT2Params(SimpleSALTDist):
