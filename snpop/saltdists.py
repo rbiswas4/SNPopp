@@ -5,6 +5,8 @@ from __future__ import absolute_import, print_function
 __all__ = ['SALT2_MMDist']
 import numpy as np
 
+
+
 def double_gauss(mu, sigp, sigm, size):
     """Double Gaussian distribution. Note: mu is the mode and not the mean."""
     
