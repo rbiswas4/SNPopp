@@ -33,5 +33,6 @@ setup(# package information
       packagedir={PACKAGENAME: 'snpop'},
       # What data to include as packages
       include_package_data=True,
+      install_requires=['tdaspop'],
       package_data={PACKAGENAME:['example_data/*.dat']}
       )

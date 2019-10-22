@@ -1,0 +1,12 @@
+# Required Packages beyond miniconda install
+- numpy
+- pytest
+- future
+- pytest-cov
+- python-coveralls
+- coverage
+- matplotlib
+- tdaspop
+- pandas
+- astropy
+- healpy
