@@ -2,21 +2,111 @@
 Module related to details of SALT distributions
 """
 from __future__ import absolute_import, print_function
-__all__ = ['SALT2_MMDist']
+__all__ = ['SALT2_MMDist', 'SALT2_SK16', 'sample_SALT2_SK16_hybrid']
 import numpy as np
+from tdaspop import double_gaussian
 
 def double_gauss(mu, sigp, sigm, size):
     """Double Gaussian distribution. Note: mu is the mode and not the mean."""
     
     sigm = abs(sigm) # Just in case
 
-    p = np.array([sigp, sigm], dtype=np.float64) # probability of one side is proportional to sigma on that side
+    # probability of one side is proportional to sigma on that side
+    p = np.array([sigp, sigm], dtype=np.float64) # normalize
     p /= sum(p)
 
 
     sig = np.random.choice([sigp, -sigm], size = size, replace = True, p = p)
     
     return abs(np.random.normal(size = size))*sig + mu
+
+def  sample_SALT2_SK16_hybrid(num_sn, model1, model2, probs=[0.5, 0.5],
+                              rng=np.random.RandomState(1)):
+    """
+    Hybrid 
+    """
+    sk1 = SALT2_SK16.from_model_name(model1)
+    sk2 = SALT2_SK16.from_model_name(model2)
+    
+    p1 = probs[0]
+    num1 = np.int(np.floor(num_sn *p1))
+    num2 = np.int(num_sn - num1)
+    return np.vstack((sk1.sample(num1), sk2.sample(num2)))
+
+class SALT2_SK16(object):
+    """
+    Implementation of distribution of x1, and c from  Scolnic and Kessler,
+    ApJ, 2016.
+    """
+    def __init__(self, csigmalow, csigmahigh, cmode, x1sigmalow, x1sigmahigh,
+                 x1mode, rng=np.random.RandomState()):
+        self.csigmalow = csigmalow
+        self.csigmahigh = csigmahigh
+        self.cmode = cmode
+        self.x1sigmalow = x1sigmalow
+        self.x1sigmahigh = x1sigmahigh
+        self.x1mode = x1mode
+        self.rng = rng
+
+
+    @classmethod
+    def from_model_name(cls, model_name, rng=np.random.RandomState(1)):
+        """ Implementations for models calculated from all surveys and G10,
+        C11 scatter, and lowz surveys with G10 and C11 scatter. Set these
+        models by name by using:
+
+        All g10 : 'sk16_all_g10'
+        All c11 : 'sk16_all_c11'
+        Lowz g10 : 'sk16_lowz_g10'
+        Lowz c11 : 'sk16_lowz_c11'
+        """
+        if model_name.lower() == "sk16_all_g10":
+            cm  = -0.043
+            csl = 0.052
+            csh = 0.107
+            xm  = 0.945
+            xsl = 1.553
+            xsh = 0.257
+
+        elif model_name.lower() == "sk16_all_c11":
+            cm  = -0.062
+            csl = 0.032
+            csh = 0.113
+            xm  = 0.938
+            xsl = 1.551
+            xsh = 0.26
+
+        elif model_name.lower() == "sk16_lowz_g10":
+            cm  = -0.055
+            csl = 0.023
+            csh = 0.150
+            xm  = 0.436
+            xsl = 3.118
+            xsh = 0.724
+
+        elif model_name.lower() == "sk16_lowz_c11":
+            cm  = -0.069
+            csl = 0.023
+            csh = 0.083
+            xm  = 0.436
+            xsl = 3.118
+            xsh = 0.724
+        else:
+            raise NotImplementedError(f'class method for ks16 for Model name {model_name} not implemented yet')
+        return cls(csl, csh, cm, xsl, xsh, xm, rng)
+
+    def sample(self, num_sn):
+        """
+        """
+        c = double_gaussian(self.cmode, self.csigmalow, self.csigmahigh, size=num_sn, rng=self.rng)
+        x1 = double_gaussian(self.x1mode, self.x1sigmalow, self.x1sigmahigh, size=num_sn, rng=self.rng)
+        X = np.zeros(shape=(num_sn, 2))
+        X[:, 0] = x1
+        X[:, 1] = c
+        return X  
+
+
+
 
 def SALT2_MMDist(numSN,
                  cm=-0.0474801042369, cs1=0.0965032273527, cs2=0.042844366359,
