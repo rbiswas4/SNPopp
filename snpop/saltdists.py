@@ -23,7 +23,26 @@ def double_gauss(mu, sigp, sigm, size):
 def  sample_SALT2_SK16_hybrid(num_sn, model1, model2, probs=[0.5, 0.5],
                               rng=np.random.RandomState(1)):
     """
-    Hybrid 
+    Hybrid  model scheme meant to weight different modes of intrinsic dispersion
+
+    Parameters
+    ----------
+    num_sn : int
+        number of samples requested
+    model1 : string
+        must be an available model name in `SALT2_SK16`
+    model2 : string
+        must be an available model name in `SALT2_SK16`
+    probs : sequence of size 2
+        should have two floats. (prob of being model 1, and prob of being model2)
+    rng : `np.random.RandomState`
+        Instance of randomstate
+
+
+    Returns
+    -------
+    samples : `np.ndarray` of shape (num_sn, 2)
+    samples of x1 and c in  samples[:, 0] and samples[:, 1] respectively.
     """
     sk1 = SALT2_SK16.from_model_name(model1)
     sk2 = SALT2_SK16.from_model_name(model2)
@@ -31,12 +50,29 @@ def  sample_SALT2_SK16_hybrid(num_sn, model1, model2, probs=[0.5, 0.5],
     p1 = probs[0]
     num1 = np.int(np.floor(num_sn *p1))
     num2 = np.int(num_sn - num1)
+
     return np.vstack((sk1.sample(num1), sk2.sample(num2)))
 
 class SALT2_SK16(object):
     """
     Implementation of distribution of x1, and c from  Scolnic and Kessler,
     ApJ, 2016.
+
+    Parameters
+    ----------
+    csigmalow : float
+        sigma for lower values of the double gaussian for c
+    csigmahigh : float
+        sigma for higher values of the double gaussian for c
+    cmode : float
+        mode of the c distribution
+    x1sigmalow : float
+        sigma for lower values of the double gaussian for x1
+    x1sigmahigh : float
+        sigma for higher values of the double gaussian for x1
+    x1mode : float
+        mode of the x1 distribution
+    rng : Instance of `np.random.RandomState`
     """
     def __init__(self, csigmalow, csigmahigh, cmode, x1sigmalow, x1sigmahigh,
                  x1mode, rng=np.random.RandomState()):
@@ -97,6 +133,17 @@ class SALT2_SK16(object):
 
     def sample(self, num_sn):
         """
+        Draw samples from the distribution specified by the class
+
+        Parameters
+        ----------
+        num_sn : int
+            number of SN
+
+        Returns
+        -------
+        samples : `np.ndarray` with shape = (num_sn, 2)
+        Contains the x1 samples in samples[:, 0] and c samples in samples[:, 1]
         """
         c = double_gaussian(self.cmode, self.csigmalow, self.csigmahigh, size=num_sn, rng=self.rng)
         x1 = double_gaussian(self.x1mode, self.x1sigmalow, self.x1sigmahigh, size=num_sn, rng=self.rng)
