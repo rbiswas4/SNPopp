@@ -1,16 +1,175 @@
 """
 Concrete implementations of `varpop.BaseSpatialPopulation` for SALT2 SN.
+
+JLA : Table 12 (B14), alpha = 0.14, beta = 3.139
+JLA : Eqns 4. + 5 : mu = mBstar - (MB  - alpha X1 + beta C), MB = MB + DeltaM Theta(M-10**10 M_sun)
+high x1 -> high stretch -> broader -> brighter
+low c -> B smaller than V -> B brighter than V -> bluer -> brighter
 """
 from __future__ import absolute_import, print_function
-__all__ = ['SimpleSALTPopulation', 'GMM_SALTPopulation']
+__all__ = ['SimpleSALTPopulation', 'GMM_SALTPopulation', 'SALTPopulation']
 import numpy as np
 import pandas as pd
 from astropy.cosmology import Planck15
 import sncosmo
 from tdaspop import (BasePopulation,
                     PowerLawRates)
-from . import SALT2_MMDist
+from . import SALT2_MMDist, SALT2_SK16
 
+def delta_Mabs(alpha, beta, x1, c):
+    """
+    Quantity to be added to a central value to obtain the unstandardized absolute
+    magnitude at peak of the supernovae.
+
+    Parameters
+    ----------
+    alpha : float
+    beta : float
+    x1 : 
+    c :
+    """
+    return - alpha * x1 + beta * c 
+
+
+def salt_amps(z, x1, c, Mabs, cosmo=Planck15, model=None):
+
+    if model is None:
+        model = sncosmo.Model(source='SALT2')
+    model.set(z=z, x1=x1, c=c)
+    model.set_source_peakabsmag(Mabs, 'bessellB', 'ab', cosmo=cosmo)
+    x0 = model.get('x0')
+    mB = model.source.peakmag('bessellB', 'ab', sampling=0.2)
+    return x0, mB
+
+
+
+class SALTPopulation(BasePopulation):
+    """
+    Concrete Implementation of `tdaspop.BasePopulation` for SALT parameters
+    based on a normal distribution 
+    """
+    def __init__(self, zSamples, x1Samples, cSamples, rng, snids=None, alphaTripp=0.11, betaTripp=3.14,
+                 meanMB=-19.3, Mdisp=0.15,
+                 cosmo=Planck15, mjdmin=59580., surveyDuration=10.):
+        """
+        Parameters
+        ----------
+        zSamples : sequence
+            z values list or one-d array
+        x1Samples : sequence
+            x values list or one-d array
+        cSamples : sequence
+            c values list or one-d array
+        snids : sequence of integers or strings
+            sequence of ids
+        alphaTripp : float, defaults to 0.11
+            `alpha` in the Tripp relation
+        betaTripp : float, defaults to 3.14
+            `beta` in the Tripp relation
+        meanMB : float, defaults to -19.3
+            absolute BessellB magnitude of the SN at peak.
+        Mdisp : float, defaults to 0.15
+            intrinsic dispersion of the SN assumed to be in brightness only
+        rng : instance of `np.random.RandomState`
+            random state used for `model_rng`
+        cosmo : instance of `astropy.cosmology`, defaults to Planck15 values
+            Cosmology specified as in astropy
+        mjdmin : float, units of days, defaults to 59580.0
+            mjd at the start of the survey
+        surveyDuration: float, units of years
+            duration of the survey in years
+        """
+        self.zSamples = zSamples
+        self._snids = snids
+        self.alpha = alphaTripp
+        self.beta = betaTripp
+        self.cSamples = cSamples
+        self.x1Samples = x1Samples
+        self.centralMabs = meanMB
+        self.Mdisp = Mdisp
+        self._rng = rng
+        self.cosmo = cosmo
+        self._mjdmin = mjdmin
+        self.surveyDuration = surveyDuration
+        self._paramsTable = None
+
+
+    @classmethod
+    def fromSkyArea(cls, rng, dist_dict, snids=None, alpha=2.6e-5,
+                    beta=1.5, alphaTripp=0.11, betaTripp=3.14,
+                    meanMB=-19.3, Mdisp=0.15,
+                    cosmo=Planck15, mjdmin=59580., surveyDuration=10.,
+                    fieldArea=10., skyFraction=None, zmax=1.4, zmin=1.0e-8,
+                    numzBins=20):
+        """
+        Class method to use either FieldArea or skyFraction and zbins 
+        (zmin, zmax, numzins) to obtain the correct number of zSamples.
+        """
+        pl = PowerLawRates(rng=rng, cosmo=cosmo,
+                           alpha_rate=alpha, beta_rate=beta,
+                           zlower=zmin, zhigher=zmax, num_bins=numzBins,
+                           zbin_edges=None, survey_duration=surveyDuration,
+                           sky_area=fieldArea, sky_fraction=skyFraction)
+
+        dist = eval(dist_dict['dist_name']).from_model_name(dist_dict['model_name'], rng)
+        samps = dist.sample(len(pl.z_samples))
+        x1Samples = samps[:, 0]
+        cSamples = samps[:, 1] 
+        cl = cls(pl.z_samples, x1Samples, cSamples, rng=rng, snids=snids,
+                 alphaTripp=alphaTripp, betaTripp=betaTripp,
+                 meanMB=meanMB, Mdisp=Mdisp, cosmo=cosmo, mjdmin=mjdmin,
+                 surveyDuration=surveyDuration)
+        return cl
+
+    @property
+    def mjdmin(self):
+        return self._mjdmin
+
+    @property
+    def mjdmax(self):
+        return self.mjdmin + self.surveyDuration * 365.0
+
+    @property
+    def paramsTable(self):
+        if self._paramsTable is None:
+            timescale = self.mjdmax - self.mjdmin
+            T0Vals = self.rng_model.uniform(size=self.numSources) * timescale \
+                    + self.mjdmin
+            cVals = self.cSamples 
+            x1Vals = self.x1Samples
+            M = delta_Mabs(self.alpha, self.beta, x1Vals, cVals)
+            MnoDisp = self.centralMabs + M
+            MabsVals = MnoDisp + self.rng_model.normal(loc=0., scale=self.Mdisp,
+                                                       size=self.numSources)
+            x0 = np.zeros(self.numSources)
+            mB = np.zeros(self.numSources)
+            model = sncosmo.Model(source='SALT2')
+            for i, z in enumerate(self.zSamples):
+                x0[i], mB[i] = salt_amps(z, x1Vals[i], cVals[i], MabsVals[i], cosmo=Planck15,
+                                         model=model)
+
+            df = pd.DataFrame(dict(x0=x0, mB=mB, x1=x1Vals, c=cVals,
+                                   MnoDisp=MnoDisp, Mabs=MabsVals, t0=T0Vals,
+                                   z=self.zSamples, idx=self.idxvalues))
+            df['model'] = 'SALT2'
+            self._paramsTable = df.set_index('idx')
+        return self._paramsTable
+
+    @property
+    def idxvalues(self):
+        if self._snids is None:
+            self._snids = np.arange(self.numSources)
+        return self._snids
+
+    @property
+    def numSources(self):
+        return len(self.zSamples)
+
+    @property
+    def rng_model(self):
+        if self._rng is None:
+            raise ValueError('rng must be provided')
+        return self._rng
 
 class SimpleSALTPopulation(BasePopulation):
     """
@@ -121,7 +280,7 @@ class SimpleSALTPopulation(BasePopulation):
             df = pd.DataFrame(dict(x0=x0, mB=mB, x1=x1vals, c=cvals,
                                    MnoDisp=MnoDisp, Mabs=Mabs, t0=T0Vals,
                                    z=self.zSamples, idx=self.idxvalues))
-            df['model'] = 'SALT2'
+            df['model'] = model
             self._paramsTable = df.set_index('idx')
         return self._paramsTable
 
