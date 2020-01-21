@@ -91,12 +91,12 @@ class SALT2_SK16(object):
         C11 scatter, and lowz surveys with G10 and C11 scatter. Set these
         models by name by using:
 
-        All g10 : 'sk16_all_g10'
-        All c11 : 'sk16_all_c11'
+        All g10 : 'sk16_allz_g10'
+        All c11 : 'sk16_allz_c11'
         Lowz g10 : 'sk16_lowz_g10'
         Lowz c11 : 'sk16_lowz_c11'
         """
-        if model_name.lower() == "sk16_all_g10":
+        if model_name.lower() == "sk16_allz_g10":
             cm  = -0.043
             csl = 0.052
             csh = 0.107
@@ -104,7 +104,7 @@ class SALT2_SK16(object):
             xsl = 1.553
             xsh = 0.257
 
-        elif model_name.lower() == "sk16_all_c11":
+        elif model_name.lower() == "sk16_allz_c11":
             cm  = -0.062
             csl = 0.032
             csh = 0.113

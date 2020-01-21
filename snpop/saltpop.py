@@ -16,7 +16,7 @@ from tdaspop import (BasePopulation,
                     PowerLawRates)
 from . import SALT2_MMDist, SALT2_SK16
 
-def delta_Mabs(alpha, beta, x1, c):
+def delta_Mabs(x1, c, alpha=0.14, beta=3.139):
     """
     Quantity to be added to a central value to obtain the unstandardized absolute
     magnitude at peak of the supernovae.
@@ -24,14 +24,38 @@ def delta_Mabs(alpha, beta, x1, c):
     Parameters
     ----------
     alpha : float
+        expected to be of order 0.1 and positive
     beta : float
-    x1 : 
-    c :
+        expected to be of order 3 and positive
+    x1 : `np.ndarray` or float 
+        SALT2 `x1` parameter
+    c : `np.ndarray` or float
+        SALT2 `c` parameter
+
+    Returns
+    -------
+    delta_M : `np.ndarray`
     """
+    x1 = np.ravel(x1)
+    c = np.ravel(c)
     return - alpha * x1 + beta * c 
 
 
 def salt_amps(z, x1, c, Mabs, cosmo=Planck15, model=None):
+    """
+    Given the absolute magnitude of the SNIa in the rest frame BessellB band
+    evaluate `x0` and `mB`
+
+
+    Parameters
+    ----------
+    z : float
+        redshift
+    x1 : float
+        SALT2 `x1` parameter (stretch)
+    c : float
+        SALT2 `c` parameter
+    """
 
     if model is None:
         model = sncosmo.Model(source='SALT2')
@@ -131,13 +155,20 @@ class SALTPopulation(BasePopulation):
 
     @property
     def paramsTable(self):
+        """
+        df :`pd.dataFrame` with index `idx` and minimal columns : `z`, `x0`, `mBstar`, `x1`, `c`, `Mabs`, 
+            `MnoDisp`. `Mabs` is the absolute magnitude in rest frame B band _after_ addition of intrinsic 
+            dispersion. `MnoDisp` is the absolute magnitude in the rest frame B Band before addition of intrinsic
+            dispersion. Both of these quantities are unstandardadized, `delta(alpha, beta, x1, c)` must be subtracted
+            to standardize them.
+        """
         if self._paramsTable is None:
             timescale = self.mjdmax - self.mjdmin
             T0Vals = self.rng_model.uniform(size=self.numSources) * timescale \
                     + self.mjdmin
             cVals = self.cSamples 
             x1Vals = self.x1Samples
-            M = delta_Mabs(self.alpha, self.beta, x1Vals, cVals)
+            M = delta_Mabs( x1Vals, cVals, self.alpha, self.beta)
             MnoDisp = self.centralMabs + M
             MabsVals = MnoDisp + self.rng_model.normal(loc=0., scale=self.Mdisp,
                                                        size=self.numSources)
@@ -148,7 +179,7 @@ class SALTPopulation(BasePopulation):
                 x0[i], mB[i] = salt_amps(z, x1Vals[i], cVals[i], MabsVals[i], cosmo=Planck15,
                                          model=model)
 
-            df = pd.DataFrame(dict(x0=x0, mB=mB, x1=x1Vals, c=cVals,
+            df = pd.DataFrame(dict(x0=x0, mB=mBstar, x1=x1Vals, c=cVals,
                                    MnoDisp=MnoDisp, Mabs=MabsVals, t0=T0Vals,
                                    z=self.zSamples, idx=self.idxvalues))
             df['model'] = 'SALT2'
@@ -263,12 +294,15 @@ class SimpleSALTPopulation(BasePopulation):
                                           size=self.numSources)
             x1vals = self.rng_model.normal(loc=0., scale=self.x1Sigma,
                                            size=self.numSources)
-            M = - self.alpha * x1vals - self.beta * cvals
+            # M = - self.alpha * x1vals - self.beta * cvals
+            M = delta_Mabs( x1vals, cvals, self.alpha, self.beta)
             MnoDisp = self.centralMabs + M
             Mabs = MnoDisp + self.rng_model.normal(loc=0., scale=self.Mdisp,
                                                size=self.numSources)
             x0 = np.zeros(self.numSources)
             mB = np.zeros(self.numSources)
+
+            # Change df['model'] if this is no longer hard coded
             model = sncosmo.Model(source='SALT2')
             for i, z in enumerate(self.zSamples):
                 model.set(z=z, x1=x1vals[i], c=cvals[i])
@@ -280,7 +314,9 @@ class SimpleSALTPopulation(BasePopulation):
             df = pd.DataFrame(dict(x0=x0, mB=mB, x1=x1vals, c=cvals,
                                    MnoDisp=MnoDisp, Mabs=Mabs, t0=T0Vals,
                                    z=self.zSamples, idx=self.idxvalues))
-            df['model'] = model
+
+            # As long as the model is SALT2 above we can also freeze this.
+            df['model'] = 'SALT2'
             self._paramsTable = df.set_index('idx')
         return self._paramsTable
 
