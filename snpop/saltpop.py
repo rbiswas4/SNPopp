@@ -1,16 +1,206 @@
 """
 Concrete implementations of `varpop.BaseSpatialPopulation` for SALT2 SN.
+
+JLA : Table 12 (B14), alpha = 0.14, beta = 3.139
+JLA : Eqns 4. + 5 : mu = mBstar - (MB  - alpha X1 + beta C), MB = MB + DeltaM Theta(M-10**10 M_sun)
+high x1 -> high stretch -> broader -> brighter
+low c -> B smaller than V -> B brighter than V -> bluer -> brighter
 """
 from __future__ import absolute_import, print_function
-__all__ = ['SimpleSALTPopulation', 'GMM_SALTPopulation']
+__all__ = ['SimpleSALTPopulation', 'GMM_SALTPopulation', 'SALTPopulation']
 import numpy as np
 import pandas as pd
 from astropy.cosmology import Planck15
 import sncosmo
-from varpop import (BasePopulation,
+from tdaspop import (BasePopulation,
                     PowerLawRates)
-from . import SALT2_MMDist
+from . import SALT2_MMDist, SALT2_SK16
 
+def delta_Mabs(x1, c, alpha=0.14, beta=3.139):
+    """
+    Quantity to be added to a central value to obtain the unstandardized absolute
+    magnitude at peak of the supernovae.
+
+    Parameters
+    ----------
+    alpha : float
+        expected to be of order 0.1 and positive
+    beta : float
+        expected to be of order 3 and positive
+    x1 : `np.ndarray` or float 
+        SALT2 `x1` parameter
+    c : `np.ndarray` or float
+        SALT2 `c` parameter
+
+    Returns
+    -------
+    delta_M : `np.ndarray`
+    """
+    x1 = np.ravel(x1)
+    c = np.ravel(c)
+    return - alpha * x1 + beta * c 
+
+
+def salt_amps(z, x1, c, Mabs, cosmo=Planck15, model=None):
+    """
+    Given the absolute magnitude of the SNIa in the rest frame BessellB band
+    evaluate `x0` and `mB`
+
+
+    Parameters
+    ----------
+    z : float
+        redshift
+    x1 : float
+        SALT2 `x1` parameter (stretch)
+    c : float
+        SALT2 `c` parameter
+    """
+
+    if model is None:
+        model = sncosmo.Model(source='SALT2')
+    model.set(z=z, x1=x1, c=c)
+    model.set_source_peakabsmag(Mabs, 'bessellB', 'ab', cosmo=cosmo)
+    x0 = model.get('x0')
+    mB = model.source.peakmag('bessellB', 'ab', sampling=0.2)
+    return x0, mB
+
+
+
+class SALTPopulation(BasePopulation):
+    """
+    Concrete Implementation of `tdaspop.BasePopulation` for SALT parameters
+    based on a normal distribution 
+    """
+    def __init__(self, zSamples, x1Samples, cSamples, rng, snids=None, alphaTripp=0.11, betaTripp=3.14,
+                 meanMB=-19.3, Mdisp=0.15,
+                 cosmo=Planck15, mjdmin=59580., surveyDuration=10.):
+        """
+        Parameters
+        ----------
+        zSamples : sequence
+            z values list or one-d array
+        x1Samples : sequence
+            x values list or one-d array
+        cSamples : sequence
+            c values list or one-d array
+        snids : sequence of integers or strings
+            sequence of ids
+        alphaTripp : float, defaults to 0.11
+            `alpha` in the Tripp relation
+        betaTripp : float, defaults to 3.14
+            `beta` in the Tripp relation
+        meanMB : float, defaults to -19.3
+            absolute BessellB magnitude of the SN at peak.
+        Mdisp : float, defaults to 0.15
+            intrinsic dispersion of the SN assumed to be in brightness only
+        rng : instance of `np.random.RandomState`
+            random state used for `model_rng`
+        cosmo : instance of `astropy.cosmology`, defaults to Planck15 values
+            Cosmology specified as in astropy
+        mjdmin : float, units of days, defaults to 59580.0
+            mjd at the start of the survey
+        surveyDuration: float, units of years
+            duration of the survey in years
+        """
+        self.zSamples = zSamples
+        self._snids = snids
+        self.alpha = alphaTripp
+        self.beta = betaTripp
+        self.cSamples = cSamples
+        self.x1Samples = x1Samples
+        self.centralMabs = meanMB
+        self.Mdisp = Mdisp
+        self._rng = rng
+        self.cosmo = cosmo
+        self._mjdmin = mjdmin
+        self.surveyDuration = surveyDuration
+        self._paramsTable = None
+
+
+    @classmethod
+    def fromSkyArea(cls, rng, dist_dict, snids=None, alpha=2.6e-5,
+                    beta=1.5, alphaTripp=0.11, betaTripp=3.14,
+                    meanMB=-19.3, Mdisp=0.15,
+                    cosmo=Planck15, mjdmin=59580., surveyDuration=10.,
+                    fieldArea=10., skyFraction=None, zmax=1.4, zmin=1.0e-8,
+                    numzBins=20):
+        """
+        Class method to use either FieldArea or skyFraction and zbins 
+        (zmin, zmax, numzins) to obtain the correct number of zSamples.
+        """
+        pl = PowerLawRates(rng=rng, cosmo=cosmo,
+                           alpha_rate=alpha, beta_rate=beta,
+                           zlower=zmin, zhigher=zmax, num_bins=numzBins,
+                           zbin_edges=None, survey_duration=surveyDuration,
+                           sky_area=fieldArea, sky_fraction=skyFraction)
+
+        dist = eval(dist_dict['dist_name']).from_model_name(dist_dict['model_name'], rng)
+        samps = dist.sample(len(pl.z_samples))
+        x1Samples = samps[:, 0]
+        cSamples = samps[:, 1] 
+        cl = cls(pl.z_samples, x1Samples, cSamples, rng=rng, snids=snids,
+                 alphaTripp=alphaTripp, betaTripp=betaTripp,
+                 meanMB=meanMB, Mdisp=Mdisp, cosmo=cosmo, mjdmin=mjdmin,
+                 surveyDuration=surveyDuration)
+        return cl
+
+    @property
+    def mjdmin(self):
+        return self._mjdmin
+
+    @property
+    def mjdmax(self):
+        return self.mjdmin + self.surveyDuration * 365.0
+
+    @property
+    def paramsTable(self):
+        """
+        df :`pd.dataFrame` with index `idx` and minimal columns : `z`, `x0`, `mBstar`, `x1`, `c`, `Mabs`, 
+            `MnoDisp`. `Mabs` is the absolute magnitude in rest frame B band _after_ addition of intrinsic 
+            dispersion. `MnoDisp` is the absolute magnitude in the rest frame B Band before addition of intrinsic
+            dispersion. Both of these quantities are unstandardadized, `delta(alpha, beta, x1, c)` must be subtracted
+            to standardize them.
+        """
+        if self._paramsTable is None:
+            timescale = self.mjdmax - self.mjdmin
+            T0Vals = self.rng_model.uniform(size=self.numSources) * timescale \
+                    + self.mjdmin
+            cVals = self.cSamples 
+            x1Vals = self.x1Samples
+            M = delta_Mabs( x1Vals, cVals, self.alpha, self.beta)
+            MnoDisp = self.centralMabs + M
+            MabsVals = MnoDisp + self.rng_model.normal(loc=0., scale=self.Mdisp,
+                                                       size=self.numSources)
+            x0 = np.zeros(self.numSources)
+            mB = np.zeros(self.numSources)
+            model = sncosmo.Model(source='SALT2')
+            for i, z in enumerate(self.zSamples):
+                x0[i], mB[i] = salt_amps(z, x1Vals[i], cVals[i], MabsVals[i], cosmo=Planck15,
+                                         model=model)
+
+            df = pd.DataFrame(dict(x0=x0, mB=mBstar, x1=x1Vals, c=cVals,
+                                   MnoDisp=MnoDisp, Mabs=MabsVals, t0=T0Vals,
+                                   z=self.zSamples, idx=self.idxvalues))
+            df['model'] = 'SALT2'
+            self._paramsTable = df.set_index('idx')
+        return self._paramsTable
+
+    @property
+    def idxvalues(self):
+        if self._snids is None:
+            self._snids = np.arange(self.numSources)
+        return self._snids
+
+    @property
+    def numSources(self):
+        return len(self.zSamples)
+
+    @property
+    def rng_model(self):
+        if self._rng is None:
+            raise ValueError('rng must be provided')
+        return self._rng
 
 class SimpleSALTPopulation(BasePopulation):
     """
@@ -74,12 +264,13 @@ class SimpleSALTPopulation(BasePopulation):
         Class method to use either FieldArea or skyFraction and zbins 
         (zmin, zmax, numzins) to obtain the correct number of zSamples.
         """
-        pl = PowerLawRates(rng=rng, cosmo=cosmo, alpha=alpha, beta=beta,
-                           zlower=zmin, zhigher=zmax, numBins=numzBins,
-                           surveyDuration=surveyDuration, fieldArea=fieldArea,
-                           skyFraction=skyFraction)
+        pl = PowerLawRates(rng=rng, cosmo=cosmo,
+                           alpha_rate=alpha, beta_rate=beta,
+                           zlower=zmin, zhigher=zmax, num_bins=numzBins, zbin_edges=None,
+                           survey_duration=surveyDuration, sky_area=fieldArea,
+                           sky_fraction=skyFraction)
 
-        cl = cls(pl.zSamples, rng=rng, snids=snids, alphaTripp=alphaTripp,
+        cl = cls(pl.z_samples, rng=rng, snids=snids, alphaTripp=alphaTripp,
                  betaTripp=betaTripp, cSigma=cSigma, x1Sigma=x1Sigma,
                  meanMB=meanMB, Mdisp=Mdisp, cosmo=cosmo, mjdmin=mjdmin,
                  surveyDuration=surveyDuration)
@@ -103,12 +294,15 @@ class SimpleSALTPopulation(BasePopulation):
                                           size=self.numSources)
             x1vals = self.rng_model.normal(loc=0., scale=self.x1Sigma,
                                            size=self.numSources)
-            M = - self.alpha * x1vals - self.beta * cvals
+            # M = - self.alpha * x1vals - self.beta * cvals
+            M = delta_Mabs( x1vals, cvals, self.alpha, self.beta)
             MnoDisp = self.centralMabs + M
             Mabs = MnoDisp + self.rng_model.normal(loc=0., scale=self.Mdisp,
                                                size=self.numSources)
             x0 = np.zeros(self.numSources)
             mB = np.zeros(self.numSources)
+
+            # Change df['model'] if this is no longer hard coded
             model = sncosmo.Model(source='SALT2')
             for i, z in enumerate(self.zSamples):
                 model.set(z=z, x1=x1vals[i], c=cvals[i])
@@ -120,6 +314,8 @@ class SimpleSALTPopulation(BasePopulation):
             df = pd.DataFrame(dict(x0=x0, mB=mB, x1=x1vals, c=cvals,
                                    MnoDisp=MnoDisp, Mabs=Mabs, t0=T0Vals,
                                    z=self.zSamples, idx=self.idxvalues))
+
+            # As long as the model is SALT2 above we can also freeze this.
             df['model'] = 'SALT2'
             self._paramsTable = df.set_index('idx')
         return self._paramsTable
@@ -229,198 +425,6 @@ class GMM_SALTPopulation(SimpleSALTPopulation):
 ###            numSamples -= num_obtained
 ###        return res_phi, res_theta
 ###
-###
-###class PowerLawRates(RateDistributions):
-###    """
-###    This class is a concrete implementation of `RateDistributions` with the
-###    following properties:
-###    - The SN rate : The SN rate is a single power law with numerical
-###        coefficients (alpha, beta)  passed into the instantiation. The rate is
-###        the number of SN at redshift z per comoving volume per unit observer
-###        time over the entire sky expressed in units of numbers/Mpc^3/year 
-###    - A binning in redshift is used to perform the calculation of numbers of SN.
-###        This is assumed
-###    - The expected number of SN in each of these redshift bins is computed using
-###        the rate above, and a cosmology to compute the comoving volume for the
-###        redshift bin
-###    - The numbers of SN are determined by a Poisson Distribution about the
-###        expected number in each redshift bin,  determined with a random state
-###        passed in as an argument. This number must be integral.
-###    - It is assumed that the change of rates and volume within a redshift bin
-###        is negligible enough that samples to the true distribution may be drawn
-###        by obtaining number of SN samples of z from a uniform distribution
-###        within the z bin.
-###
-###    """
-###
-###    def __init__(self,
-###                 rng,
-###                 alpha=2.6e-5, beta=1.5,
-###                 zbinEdges=None,
-###                 zlower=1.0e-8,
-###                 zhigher=1.4,
-###                 numBins=20,
-###                 surveyDuration=10., # Unit of  years
-###                 fieldArea=None, # Unit of degree square
-###                 skyFraction=None,
-###                 cosmo=Planck15):
-###        """
-###        Parameters
-###        ----------
-###        rng : instance of `np.random.RandomState`
-###        cosmo : Instance of `astropy.cosmology` class, optional, defaults to Planck15
-###            data structure specifying the cosmological parameters 
-###        alpha : float, optional, defaults to 2.6e-5
-###            constant amplitude in SN rate powerlaw
-###        beta : float, optional, defaults to 1.5
-###            constant exponent in SN rate powerlaw
-###        surveyDuration : float, units of years, defaults to 10.
-###            duration of the survey in units of years
-###        fieldArea : float, units of degree sq, defaults to None
-###            area of the field over which supernovae are being simulated in
-###            units of square degrees.
-###        skyFraction : float, optional, defaults to None
-###            Alternative way of specifying fieldArea by supplying the unitless
-###            ratio between sky area where the supernovae are being simulated and
-###            accepting the default `None` for `fieldArea`
-###        """
-###        self.alpha = alpha
-###        self.beta = beta
-###        self.cosmo = cosmo
-###        self.zlower = zlower
-###        self.zhigher = zhigher
-###        self.numBins = numBins
-###        self._zbinEdges = zbinEdges
-###        self._rng = rng
-###        self.DeltaT = surveyDuration
-###        self.fieldArea = fieldArea
-###        self._skyFraction = skyFraction
-###        # not input
-###        self._numSN = None
-###        self._zSamples = None
-###
-###    @property
-###    def skyFraction(self):
-###        if self._skyFraction is None:
-###            if self.fieldArea is None:
-###                raise ValueError('both fieldArea and skyFraction cannot be given')
-###            self._skyFraction = self.fieldArea * np.radians(1.)**2.0  / 4.0 / np.pi
-###        return self._skyFraction
-###
-###    @property
-###    def randomState(self):
-###        if self._rng is None:
-###            raise NotImplemented('rng must be provided')
-###        return self._rng
-###
-###    @property
-###    def zbinEdges(self):
-###        if self._zbinEdges is None:
-###            if any(x is None for x in (self.zlower, self.zhigher, self.numBins)):
-###                raise ValueError('Both zbinEdges, and'
-###                                 '(zlower, zhigher, numBins) cannot be None')
-###            if self.zlower >= self.zhigher:
-###                raise ValueError('zlower must be less than zhigher')
-###            self._zbinEdges = np.linspace(self.zlower, self.zhigher, self.numBins + 1)
-###        return self._zbinEdges
-###
-###
-###
-###
-###    def snRate(self, z):
-###        """
-###        The rate of SN at a redshift z in units of number of SN/ comoving
-###        volume in Mpc^3/yr in earth years according to the commonly used
-###        power-law expression 
-###
-###        .. math:: rate(z) = \alpha (h/0.7)^3 (1.0 + z)^\beta
-###        
-###        Parameters
-###        ----------
-###        z : array-like, mandatory 
-###            redshifts at which the rate is evaluated
-###
-###        Examples
-###        --------
-###        """
-###        res = self.alpha * (1.0 + z)**self.beta 
-###        res *= ((self.cosmo.h / 0.7) **3.)  
-###        return res
-###
-###    def zSampleSize(self): 
-###        #, zbinEdges=self.zbinEdges, DeltaT=self.DeltaT,
-###        #            skyFraction=self.skyFraction,
-###        #            zlower=None, zhigher=None, numBins=None):
-###        """
-###        Parameters
-###        ----------
-###        zbinEdges : `nunpy.ndarray` of edges of zbins, defaults to None
-###            Should be of the form np.array([z0, z1, z2]) which will have
-###            zbins (z0, z1) and (z1, z2)
-###        skyFraction : np.float, optional, 
-###        fieldArea : optional, units of degrees squared
-###            area of sky considered.
-###        zlower : float, optional, defaults to None
-###            lower edge of z range
-###        zhigher : float, optional, defaults to None
-###            higher edge of z range
-###        numBins : int, optional, defaults to None
-###           if not None, overrides zbinEdges
-###        """
-###        DeltaT = self.DeltaT
-###        skyFraction = self.skyFraction
-###        zbinEdges = self.zbinEdges
-###        z_mids = 0.5 * (zbinEdges[1:] + zbinEdges[:-1])
-###        snpervolume = self.snRate(z_mids) 
-###
-###        # Comoving volume of the univere in between zlower and zhigher
-###        vols = self.cosmo.comoving_volume(zbinEdges)
-###
-###        # Comoving volume in each bin
-###        vol = vols[1:] - vols[:-1]
-###        vol *= skyFraction
-###        
-###        numSN = vol * snpervolume * DeltaT / (1.0 + z_mids)
-###        return numSN.value
-###
-###    def numSN(self):
-###        """
-###        Return the number of expected supernovae in time DeltaT, with a rate snrate
-###        in a redshift range zlower, zhigher divided into numBins equal redshift
-###        bins. The variation of the rate within a bin is ignored.
-###    
-###        Parameters
-###        ----------
-###        zlower : mandatory, float
-###            lower limit on redshift range
-###        zhigher : mandatory, float
-###            upper limit on redshift range
-###        numBins : mandatory, integer
-###            number of bins
-###        cosmo : `astropy.cosmology` instance, mandatory
-###            cosmological parameters
-###        fieldArea : mandatory, units of radian square
-###            sky area considered
-###        """
-###        if self._numSN is None:
-###            lam = self.zSampleSize()
-###            self._numSN = self.randomState.poisson(lam=lam)
-###        return self._numSN
-###
-###
-###    @property
-###    def zSamples(self):
-###        # Calculate only once
-###        if self._zSamples is None:
-###            numSN = self.numSN()
-###            zbinEdges =  self.zbinEdges
-###            x = zbinEdges[:-1]
-###            y = zbinEdges[1:]
-###            arr = (self.randomState.uniform(low=xx, high=yy, size=zz).tolist()
-###                                           for (xx, yy, zz) in zip(x,y, numSN))
-###            self._zSamples = np.asarray(list(__x for __lst in arr
-###                                             for __x in __lst))
-###        return self._zSamples
 ###
 ###
 ###class TwinklesRates(PowerLawRates):
