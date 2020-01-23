@@ -1,4 +1,4 @@
-"""2
+"""
 Concrete implementations of `tdaspop.BaseSpatialPopulation` for SALT2 SN.
 
 JLA : Table 12 (B14), alpha = 0.14, beta = 3.139
@@ -15,6 +15,8 @@ import sncosmo
 from tdaspop import (BasePopulation,
                     PowerLawRates)
 from . import SALT2_MMDist, SALT2_SK16
+from scipy.stats import norm
+
 
 def delta_Mabs(x1, c, alpha=0.14, beta=3.139):
     """
@@ -163,10 +165,17 @@ class SALTPopulation(BasePopulation):
 
         Parameters
         ----------
+        df : `pd.DataFrame`
+            dataframe with columns `c`, `x1`, `Mdisp`. `Mdisp` can either be of the form
+            `Mdisp = Mabs - MnoDisp or Mstd - M_central, where Mstd = Mabs - delta_abs(x1, c)
 
+        Returns
+        -------
+        pdf : `np.ndarray`
+            probability density evaluated for each sample
 
         """
-        return self.dist.pdf(df[['c', 'x1']) * norm.pdf(df['Mdisp'], loc=0., scale=self.Mdisp)
+        return self.dist.pdf(df[['c', 'x1']].values) * norm.pdf(df['Mdisp'].values, loc=0., scale=0.1)
 
     @property
     def paramsTable(self):
@@ -222,7 +231,7 @@ class SimpleSALTPopulation(BasePopulation):
     Concrete Implementation of `varpop.BasePopulation` for SALT parameters
     based on a normal distribution 
     """
-    def __init__(self, zSamples, rng, snids=None, alphaTripp=0.11, betaTripp=3.14,
+    def __init__(self, dist, zSamples, rng, snids=None, alphaTripp=0.11, betaTripp=3.14,
                  cSigma=0.1, x1Sigma=1.0, meanMB=-19.3, Mdisp=0.15,
                  cosmo=Planck15, mjdmin=59580., surveyDuration=10.):
         """
@@ -253,6 +262,7 @@ class SimpleSALTPopulation(BasePopulation):
         surveyDuration: float, units of years
             duration of the survey in years
         """
+        self.dist = dist
         self.zSamples = zSamples
         self._snids = snids
         self.alpha = alphaTripp
@@ -269,7 +279,7 @@ class SimpleSALTPopulation(BasePopulation):
 
 
     @classmethod
-    def fromSkyArea(cls, rng, snids=None, alpha=2.6e-5, beta=1.5, 
+    def fromSkyArea(cls, rng, dist, snids=None, alpha=2.6e-5, beta=1.5, 
                     alphaTripp=0.11, betaTripp=3.14,
                     cSigma=0.1, x1Sigma=1.0, meanMB=-19.3, Mdisp=0.15,
                     cosmo=Planck15, mjdmin=59580., surveyDuration=10.,
@@ -279,13 +289,14 @@ class SimpleSALTPopulation(BasePopulation):
         Class method to use either FieldArea or skyFraction and zbins 
         (zmin, zmax, numzins) to obtain the correct number of zSamples.
         """
+        dist = scipy.stats.norm
         pl = PowerLawRates(rng=rng, cosmo=cosmo,
                            alpha_rate=alpha, beta_rate=beta,
                            zlower=zmin, zhigher=zmax, num_bins=numzBins, zbin_edges=None,
                            survey_duration=surveyDuration, sky_area=fieldArea,
                            sky_fraction=skyFraction)
 
-        cl = cls(pl.z_samples, rng=rng, snids=snids, alphaTripp=alphaTripp,
+        cl = cls(dist, pl.z_samples, rng=rng, snids=snids, alphaTripp=alphaTripp,
                  betaTripp=betaTripp, cSigma=cSigma, x1Sigma=x1Sigma,
                  meanMB=meanMB, Mdisp=Mdisp, cosmo=cosmo, mjdmin=mjdmin,
                  surveyDuration=surveyDuration)
@@ -334,6 +345,24 @@ class SimpleSALTPopulation(BasePopulation):
             df['model'] = 'SALT2'
             self._paramsTable = df.set_index('idx')
         return self._paramsTable
+
+    def pdf(self, df):
+        """
+        return the pdf of simulated SN parameters.
+
+        Parameters
+        ----------
+        df : `pd.DataFrame`
+            dataframe with columns `c`, `x1`, `Mdisp`. `Mdisp` can either be of the form
+            `Mdisp = Mabs - MnoDisp or Mstd - M_central, where Mstd = Mabs - delta_abs(x1, c)
+
+        Returns
+        -------
+        pdf : `np.ndarray`
+            probability density evaluated for each sample
+
+        """
+        return self.dist.pdf(df[['c', 'x1']]) * norm.pdf(df['Mdisp'], loc=0., scale=self.Mdisp)
 
     @property
     def idxvalues(self):
