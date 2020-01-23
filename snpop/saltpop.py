@@ -1,5 +1,5 @@
-"""
-Concrete implementations of `varpop.BaseSpatialPopulation` for SALT2 SN.
+"""2
+Concrete implementations of `tdaspop.BaseSpatialPopulation` for SALT2 SN.
 
 JLA : Table 12 (B14), alpha = 0.14, beta = 3.139
 JLA : Eqns 4. + 5 : mu = mBstar - (MB  - alpha X1 + beta C), MB = MB + DeltaM Theta(M-10**10 M_sun)
@@ -72,12 +72,14 @@ class SALTPopulation(BasePopulation):
     Concrete Implementation of `tdaspop.BasePopulation` for SALT parameters
     based on a normal distribution 
     """
-    def __init__(self, zSamples, x1Samples, cSamples, rng, snids=None, alphaTripp=0.11, betaTripp=3.14,
+    def __init__(self, dist, zSamples, x1Samples, cSamples, rng, snids=None, alphaTripp=0.11, betaTripp=3.14,
                  meanMB=-19.3, Mdisp=0.15,
                  cosmo=Planck15, mjdmin=59580., surveyDuration=10.):
         """
         Parameters
         ----------
+        dist : `distribution`
+            must have method `pdf(x, *args)` which could return `None` if it is hard.
         zSamples : sequence
             z values list or one-d array
         x1Samples : sequence
@@ -103,6 +105,7 @@ class SALTPopulation(BasePopulation):
         surveyDuration: float, units of years
             duration of the survey in years
         """
+        self.dist = dist
         self.zSamples = zSamples
         self._snids = snids
         self.alpha = alphaTripp
@@ -116,6 +119,7 @@ class SALTPopulation(BasePopulation):
         self._mjdmin = mjdmin
         self.surveyDuration = surveyDuration
         self._paramsTable = None
+        self.dist = dist
 
 
     @classmethod
@@ -139,7 +143,7 @@ class SALTPopulation(BasePopulation):
         samps = dist.sample(len(pl.z_samples))
         x1Samples = samps[:, 0]
         cSamples = samps[:, 1] 
-        cl = cls(pl.z_samples, x1Samples, cSamples, rng=rng, snids=snids,
+        cl = cls(dist, pl.z_samples, x1Samples, cSamples, rng=rng, snids=snids,
                  alphaTripp=alphaTripp, betaTripp=betaTripp,
                  meanMB=meanMB, Mdisp=Mdisp, cosmo=cosmo, mjdmin=mjdmin,
                  surveyDuration=surveyDuration)
@@ -153,13 +157,19 @@ class SALTPopulation(BasePopulation):
     def mjdmax(self):
         return self.mjdmin + self.surveyDuration * 365.0
 
+    def pdf(self, x):
+        """
+        return the pdf.
+        """
+        return self.dist.pdf(x)
+
     @property
     def paramsTable(self):
         """
         df :`pd.dataFrame` with index `idx` and minimal columns : `z`, `x0`, `mBstar`, `x1`, `c`, `Mabs`, 
             `MnoDisp`. `Mabs` is the absolute magnitude in rest frame B band _after_ addition of intrinsic 
             dispersion. `MnoDisp` is the absolute magnitude in the rest frame B Band before addition of intrinsic
-            dispersion. Both of these quantities are unstandardadized, `delta(alpha, beta, x1, c)` must be subtracted
+            dispersion. Both of these quantities are unstandardized, `delta(alpha, beta, x1, c)` must be subtracted
             to standardize them.
         """
         if self._paramsTable is None:
@@ -179,7 +189,7 @@ class SALTPopulation(BasePopulation):
                 x0[i], mB[i] = salt_amps(z, x1Vals[i], cVals[i], MabsVals[i], cosmo=Planck15,
                                          model=model)
 
-            df = pd.DataFrame(dict(x0=x0, mB=mBstar, x1=x1Vals, c=cVals,
+            df = pd.DataFrame(dict(x0=x0, mBstar=mB, x1=x1Vals, c=cVals,
                                    MnoDisp=MnoDisp, Mabs=MabsVals, t0=T0Vals,
                                    z=self.zSamples, idx=self.idxvalues))
             df['model'] = 'SALT2'
