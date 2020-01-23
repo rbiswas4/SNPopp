@@ -157,11 +157,16 @@ class SALTPopulation(BasePopulation):
     def mjdmax(self):
         return self.mjdmin + self.surveyDuration * 365.0
 
-    def pdf(self, x):
+    def pdf(self, df):
         """
-        return the pdf.
+        return the pdf of simulated SN parameters.
+
+        Parameters
+        ----------
+
+
         """
-        return self.dist.pdf(x)
+        return self.dist.pdf(df[['c', 'x1']) * norm.pdf(df['Mdisp'], loc=0., scale=self.Mdisp)
 
     @property
     def paramsTable(self):
