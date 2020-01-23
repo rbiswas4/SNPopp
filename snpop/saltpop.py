@@ -175,7 +175,7 @@ class SALTPopulation(BasePopulation):
             probability density evaluated for each sample
 
         """
-        return self.dist.pdf(df[['c', 'x1']].values) * norm.pdf(df['Mdisp'].values, loc=0., scale=0.1)
+        return self.dist.pdf(df[['c', 'x1']].values)  * norm.pdf(df['Mdisp'].values, loc=0., scale=self.Mdisp)
 
     @property
     def paramsTable(self):
@@ -279,7 +279,7 @@ class SimpleSALTPopulation(BasePopulation):
 
 
     @classmethod
-    def fromSkyArea(cls, rng, dist, snids=None, alpha=2.6e-5, beta=1.5, 
+    def fromSkyArea(cls, rng, snids=None, alpha=2.6e-5, beta=1.5, 
                     alphaTripp=0.11, betaTripp=3.14,
                     cSigma=0.1, x1Sigma=1.0, meanMB=-19.3, Mdisp=0.15,
                     cosmo=Planck15, mjdmin=59580., surveyDuration=10.,
@@ -289,7 +289,7 @@ class SimpleSALTPopulation(BasePopulation):
         Class method to use either FieldArea or skyFraction and zbins 
         (zmin, zmax, numzins) to obtain the correct number of zSamples.
         """
-        dist = scipy.stats.norm
+        dist = norm
         pl = PowerLawRates(rng=rng, cosmo=cosmo,
                            alpha_rate=alpha, beta_rate=beta,
                            zlower=zmin, zhigher=zmax, num_bins=numzBins, zbin_edges=None,
@@ -362,7 +362,7 @@ class SimpleSALTPopulation(BasePopulation):
             probability density evaluated for each sample
 
         """
-        return self.dist.pdf(df[['c', 'x1']]) * norm.pdf(df['Mdisp'], loc=0., scale=self.Mdisp)
+        return self.dist.pdf(df[['c', 'x1']].values)  * norm.pdf(df['Mdisp'].values, loc=0., scale=self.Mdisp)
 
     @property
     def idxvalues(self):
