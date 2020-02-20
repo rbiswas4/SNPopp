@@ -15,7 +15,7 @@ import sncosmo
 from tdaspop import (BasePopulation,
                     PowerLawRates)
 from . import SALT2_MMDist, SALT2_SK16
-from scipy.stats import norm
+from scipy.stats import norm, multivariate_normal
 
 
 def delta_Mabs(x1, c, alpha=0.14, beta=3.139):
@@ -74,7 +74,8 @@ class SALTPopulation(BasePopulation):
     Concrete Implementation of `tdaspop.BasePopulation` for SALT parameters
     based on a normal distribution 
     """
-    def __init__(self, dist, zSamples, x1Samples, cSamples, rng, snids=None, alphaTripp=0.11, betaTripp=3.14,
+    def __init__(self, dist, zSamples, x1Samples, cSamples, rng, snids=None,
+                 alphaTripp=0.11, betaTripp=3.14,
                  meanMB=-19.3, Mdisp=0.15,
                  cosmo=Planck15, mjdmin=59580., surveyDuration=10.):
         """
@@ -127,7 +128,7 @@ class SALTPopulation(BasePopulation):
     @classmethod
     def fromSkyArea(cls, rng, dist_dict, snids=None, alpha=2.6e-5,
                     beta=1.5, alphaTripp=0.11, betaTripp=3.14,
-                    meanMB=-19.3, Mdisp=0.15,
+                    meanMB=-19.3, Mdisp=0.10,
                     cosmo=Planck15, mjdmin=59580., surveyDuration=10.,
                     fieldArea=10., skyFraction=None, zmax=1.4, zmin=1.0e-8,
                     numzBins=20):
@@ -159,32 +160,15 @@ class SALTPopulation(BasePopulation):
     def mjdmax(self):
         return self.mjdmin + self.surveyDuration * 365.0
 
-    def pdf(self, df):
-        """
-        return the pdf of simulated SN parameters.
-
-        Parameters
-        ----------
-        df : `pd.DataFrame`
-            dataframe with columns `c`, `x1`, `Mdisp`. `Mdisp` can either be of the form
-            `Mdisp = Mabs - MnoDisp or Mstd - M_central, where Mstd = Mabs - delta_abs(x1, c)
-
-        Returns
-        -------
-        pdf : `np.ndarray`
-            probability density evaluated for each sample
-
-        """
-        return self.dist.pdf(df[['c', 'x1']].values)  * norm.pdf(df['Mdisp'].values, loc=0., scale=self.Mdisp)
 
     @property
     def paramsTable(self):
         """
         df :`pd.dataFrame` with index `idx` and minimal columns : `z`, `x0`, `mBstar`, `x1`, `c`, `Mabs`, 
             `MnoDisp`. `Mabs` is the absolute magnitude in rest frame B band _after_ addition of intrinsic 
-            dispersion. `MnoDisp` is the absolute magnitude in the rest frame B Band before addition of intrinsic
-            dispersion. Both of these quantities are unstandardized, `delta(alpha, beta, x1, c)` must be subtracted
-            to standardize them.
+            dispersion. `MnoDisp` is the absolute magnitude in the rest frame B Band before addition of
+            intrinsic dispersion. Both of these quantities are unstandardized, `delta(alpha, beta, x1, c)`
+            must be subtracted to standardize them.
         """
         if self._paramsTable is None:
             timescale = self.mjdmax - self.mjdmin
@@ -226,6 +210,24 @@ class SALTPopulation(BasePopulation):
             raise ValueError('rng must be provided')
         return self._rng
 
+
+    def pdf(self, df, meanAbs=-19.3, sd=0.1, cmean=0., x1mean=0.):
+        """
+        return the pdf of simulated SN parameters.
+
+        Parameters
+        ----------
+        df : `pd.DataFrame`
+            dataframe with columns `c`, `x1`, `Mstd`. 
+            where Mstd = Mabs - delta_abs(x1, c)
+
+        Returns
+        -------
+        pdf : `np.ndarray`
+            probability density evaluated for each sample
+
+        """
+        return self.dist.pdf(df[['c', 'x1']].values)  * norm.pdf(df['Mstd'].values, loc=meanAbs, scale=sd)
 class SimpleSALTPopulation(BasePopulation):
     """
     Concrete Implementation of `varpop.BasePopulation` for SALT parameters
@@ -236,7 +238,7 @@ class SimpleSALTPopulation(BasePopulation):
                  cosmo=Planck15, mjdmin=59580., surveyDuration=10.):
         """
         Parameters
-        ----------
+-19.3-
         zSamples : sequence
             z values list or one-d array
         snids : sequence of integers or strings
@@ -281,7 +283,7 @@ class SimpleSALTPopulation(BasePopulation):
     @classmethod
     def fromSkyArea(cls, rng, snids=None, alpha=2.6e-5, beta=1.5, 
                     alphaTripp=0.11, betaTripp=3.14,
-                    cSigma=0.1, x1Sigma=1.0, meanMB=-19.3, Mdisp=0.15,
+                    cSigma=0.1, x1Sigma=1.0, meanMB=-19.3, Mdisp=0.1,
                     cosmo=Planck15, mjdmin=59580., surveyDuration=10.,
                     fieldArea=10., skyFraction=None, zmax=1.4, zmin=1.0e-8,
                     numzBins=20):
@@ -289,7 +291,8 @@ class SimpleSALTPopulation(BasePopulation):
         Class method to use either FieldArea or skyFraction and zbins 
         (zmin, zmax, numzins) to obtain the correct number of zSamples.
         """
-        dist = norm
+        dist = multivariate_normal(mean=np.array([0., 0., meanMB]),
+                                   cov=np.diag([cSigma, x1Sigma, Mdisp]))
         pl = PowerLawRates(rng=rng, cosmo=cosmo,
                            alpha_rate=alpha, beta_rate=beta,
                            zlower=zmin, zhigher=zmax, num_bins=numzBins, zbin_edges=None,
@@ -346,7 +349,9 @@ class SimpleSALTPopulation(BasePopulation):
             self._paramsTable = df.set_index('idx')
         return self._paramsTable
 
-    def pdf(self, df):
+    @staticmethod
+    def pdf(df, meanAbs=-19.3, cmean=0., x1mean=0.,
+            csig=0.1, x1sig=1.0, Mdisp=0.1):
         """
         return the pdf of simulated SN parameters.
 
@@ -356,13 +361,16 @@ class SimpleSALTPopulation(BasePopulation):
             dataframe with columns `c`, `x1`, `Mdisp`. `Mdisp` can either be of the form
             `Mdisp = Mabs - MnoDisp or Mstd - M_central, where Mstd = Mabs - delta_abs(x1, c)
 
+            Only Mstd
+
         Returns
         -------
         pdf : `np.ndarray`
             probability density evaluated for each sample
 
         """
-        return self.dist.pdf(df[['c', 'x1']].values)  * norm.pdf(df['Mdisp'].values, loc=0., scale=self.Mdisp)
+        return multivariate_normal(mean=np.array([cmean, x1mean, meanAbs]),
+                                   cov=np.diag([csig**2, x1sig**2, Mdisp**2])).pdf(df[['c', 'x1', 'Mstd']])
 
     @property
     def idxvalues(self):
