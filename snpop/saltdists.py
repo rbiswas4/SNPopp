@@ -4,7 +4,7 @@ Module related to details of SALT distributions
 from __future__ import absolute_import, print_function
 __all__ = ['SALT2_MMDist', 'SALT2_SK16', 'sample_SALT2_SK16_hybrid']
 import numpy as np
-from tdaspop import double_gaussian
+from tdaspop import double_gaussian, double_gaussian_pdf
 
 def double_gauss(mu, sigp, sigm, size):
     """Double Gaussian distribution. Note: mu is the mode and not the mean."""
@@ -130,6 +130,33 @@ class SALT2_SK16(object):
         else:
             raise NotImplementedError(f'class method for ks16 for Model name {model_name} not implemented yet')
         return cls(csl, csh, cm, xsl, xsh, xm, rng)
+
+    def pdf(self, x):
+        """
+        Evaluate the pdf at x:
+
+        Parameters
+        ----------
+        x : `np.ndarray`, shape (N, 2)
+            parmeters describing the population, with
+            x[:, 0] = c, x[:, 1] = x1
+
+        Returns
+        -------
+        pdf : `np.ndarray` of shape (N, 1)
+        """
+        c = x[:, 0]
+        x1 = x[:, 1]
+        pc = double_gaussian_pdf(c, self.cmode,
+                                 self.csigmalow,
+                                 self.csigmahigh)
+        px1 = double_gaussian_pdf(x1, self.x1mode,
+                                 self.x1sigmalow,
+                                 self.x1sigmahigh)
+
+        pdf = pc * px1
+
+        return pdf
 
     def sample(self, num_sn):
         """
