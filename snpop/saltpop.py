@@ -20,7 +20,7 @@ from scipy.stats import norm, multivariate_normal
 
 def delta_Mabs(x1, c, alpha=0.14, beta=3.139):
     """
-    Quantity to be added to a central value to obtain the unstandardized absolute
+    Quantity to be added to a central value to obtain the un-standardized absolute
     magnitude at peak of the supernovae.
 
     Parameters
@@ -211,7 +211,7 @@ class SALTPopulation(BasePopulation):
         return self._rng
 
 
-    def pdf(self, df, meanAbs=-19.3, sd=0.1, cmean=0., x1mean=0.):
+    def logpdf(self, df, meanAbs=-19.3, sd=0.1, cmean=0., x1mean=0.):
         """
         return the pdf of simulated SN parameters.
 
@@ -223,22 +223,24 @@ class SALTPopulation(BasePopulation):
 
         Returns
         -------
-        pdf : `np.ndarray`
+        logpdf : `np.ndarray`
             probability density evaluated for each sample
 
         """
-        return self.dist.pdf(df[['c', 'x1']].values)  * norm.pdf(df['Mstd'].values, loc=meanAbs, scale=sd)
+        return self.dist.logpdf(df[['c', 'x1']].values)  * norm.logpdf(df['Mstd'].values, loc=meanAbs, scale=sd)
+
+
 class SimpleSALTPopulation(BasePopulation):
     """
     Concrete Implementation of `varpop.BasePopulation` for SALT parameters
     based on a normal distribution 
     """
-    def __init__(self, dist, zSamples, rng, snids=None, alphaTripp=0.11, betaTripp=3.14,
+    def __init__(self, zSamples, rng, snids=None, alphaTripp=0.11, betaTripp=3.14,
                  cSigma=0.1, x1Sigma=1.0, meanMB=-19.3, Mdisp=0.15,
                  cosmo=Planck15, mjdmin=59580., surveyDuration=10.):
         """
         Parameters
--19.3-
+        ----------
         zSamples : sequence
             z values list or one-d array
         snids : sequence of integers or strings
@@ -264,7 +266,7 @@ class SimpleSALTPopulation(BasePopulation):
         surveyDuration: float, units of years
             duration of the survey in years
         """
-        self.dist = dist
+        # self.dist = dist
         self.zSamples = zSamples
         self._snids = snids
         self.alpha = alphaTripp
@@ -278,6 +280,8 @@ class SimpleSALTPopulation(BasePopulation):
         self._mjdmin = mjdmin
         self.surveyDuration = surveyDuration
         self._paramsTable = None
+        self.dist = multivariate_normal(mean=np.array([0., 0., meanMB]),
+                                        cov=np.diag([cSigma, x1Sigma, Mdisp]))
 
 
     @classmethod
@@ -299,7 +303,7 @@ class SimpleSALTPopulation(BasePopulation):
                            survey_duration=surveyDuration, sky_area=fieldArea,
                            sky_fraction=skyFraction)
 
-        cl = cls(dist, pl.z_samples, rng=rng, snids=snids, alphaTripp=alphaTripp,
+        cl = cls(pl.z_samples, rng=rng, snids=snids, alphaTripp=alphaTripp,
                  betaTripp=betaTripp, cSigma=cSigma, x1Sigma=x1Sigma,
                  meanMB=meanMB, Mdisp=Mdisp, cosmo=cosmo, mjdmin=mjdmin,
                  surveyDuration=surveyDuration)
@@ -350,10 +354,10 @@ class SimpleSALTPopulation(BasePopulation):
         return self._paramsTable
 
     @staticmethod
-    def pdf(df, meanAbs=-19.3, cmean=0., x1mean=0.,
+    def logpdf(df, meanAbs=-19.3, cmean=0., x1mean=0.,
             csig=0.1, x1sig=1.0, Mdisp=0.1):
         """
-        return the pdf of simulated SN parameters.
+        return the logpdf of simulated SN parameters.
 
         Parameters
         ----------
@@ -365,12 +369,12 @@ class SimpleSALTPopulation(BasePopulation):
 
         Returns
         -------
-        pdf : `np.ndarray`
+        logpdf : `np.ndarray`
             probability density evaluated for each sample
 
         """
         return multivariate_normal(mean=np.array([cmean, x1mean, meanAbs]),
-                                   cov=np.diag([csig**2, x1sig**2, Mdisp**2])).pdf(df[['c', 'x1', 'Mstd']])
+                                   cov=np.diag([csig**2, x1sig**2, Mdisp**2])).logpdf(df[['c', 'x1', 'Mstd']])
 
     @property
     def idxvalues(self):
